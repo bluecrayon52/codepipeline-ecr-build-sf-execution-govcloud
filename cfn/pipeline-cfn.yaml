@@ -87,7 +87,7 @@ Resources:
                   - codebuild:StartBuild
                   - codebuild:BatchGetBuilds
                   - iam:PassRole
-              - Resource: !Sub arn:aws-us-gov:lambda:${AWS::Region}:${AWS::AccountId}:function:${LambdaFunction.FunctionName}
+              - Resource: !GetAtt LambdaFunction.Arn 
                 Effect: Allow
                 Action: 
                   - lambda:InvokeFunction
@@ -153,7 +153,7 @@ Resources:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
       Policies: 
-        - PolicyName: 
+        - PolicyName: StateMachineLambdaProxyPolicy
           PolicyDocument:
             Version: 2012-10-17
             Statement: 
