@@ -16,6 +16,7 @@ Resources:
   Repository:
     Type: AWS::ECR::Repository
     DeletionPolicy: Delete
+
   CodeBuildServiceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -39,13 +40,13 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                   - ecr:GetAuthorizationToken                                         
-              - Resource: !Sub arn:aws:s3:::${ArtifactBucket}/*
+              - Resource: !Sub arn:aws-us-gov:s3:::${ArtifactBucket}/*
                 Effect: Allow
                 Action:
                   - s3:GetObject
                   - s3:PutObject
                   - s3:GetObjectVersion
-              - Resource: !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${Repository}
+              - Resource: !Sub arn:aws-us-gov:ecr:${AWS::Region}:${AWS::AccountId}:repository/${Repository}
                 Effect: Allow
                 Action:
                   - ecr:GetDownloadUrlForLayer
@@ -55,6 +56,7 @@ Resources:
                   - ecr:InitiateLayerUpload
                   - ecr:UploadLayerPart
                   - ecr:CompleteLayerUpload
+
   CodePipelineServiceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -72,7 +74,7 @@ Resources:
             Version: 2012-10-17
             Statement:
               - Resource:
-                  - !Sub arn:aws:s3:::${ArtifactBucket}/*
+                  - !Sub arn:aws-us-gov:s3:::${ArtifactBucket}/*
                 Effect: Allow
                 Action:
                   - s3:PutObject
@@ -85,12 +87,15 @@ Resources:
                   - codebuild:StartBuild
                   - codebuild:BatchGetBuilds
                   - iam:PassRole
-                  - states:DescribeStateMachine
-                  - states:StartExecution
-                  - states:DescribeExecution  
+              - Resource: !Sub arn:aws-us-gov:lambda:${AWS::Region}:${AWS::AccountId}:function:${LambdaFunction.FunctionName}
+                Effect: Allow
+                Action: 
+                  - lambda:InvokeFunction
+  
   ArtifactBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Delete
+
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
@@ -135,9 +140,78 @@ Resources:
             Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${Repository}
       Name: !Ref AWS::StackName
       ServiceRole: !Ref CodeBuildServiceRole  
+
+  LambdaIAMRole:
+    Type: AWS::IAM::Role 
+    Properties: 
+      Path: / 
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement: 
+          - Effect: Allow
+            Principal: 
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies: 
+        - PolicyName: 
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement: 
+              - Effect: Allow
+                Action: 
+                  - states:DescribeStateMachine
+                  - states:StartExecution
+                  - states:DescribeExecution 
+                Resource: !Ref MlOpsStepFunctionArn
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.9
+      Role: !GetAtt LambdaIAMRole.Arn 
+      Handler: index.lambda_handler
+      Environment: 
+        Variables:
+          smArn: !Ref MlOpsStepFunctionArn
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import os
+
+          def lambda_handler(event, context):
+              # Retrieve the input artifact from the CodeBuild stage
+              input_artifact = event['CodePipeline.job']['data']['inputArtifacts'][0]
+              artifact_s3_bucket = input_artifact['location']['s3Location']['bucketName']
+              artifact_s3_key = input_artifact['location']['s3Location']['objectKey']
+
+              # Download the input artifact file
+              s3 = boto3.client('s3')
+              temp_file_path = '/tmp/sf_start_params.json'  # Temporary file path on the Lambda execution environment
+              s3.download_file(artifact_s3_bucket, artifact_s3_key, temp_file_path)
+
+              # Read the contents of the input file
+              with open(temp_file_path, 'r') as file:
+                  input_data = json.load(file)
+
+              # Start the Step Functions state machine execution
+              stepfunctions = boto3.client('stepfunctions')
+              state_machine_arn = os.environ.get('smArn')
+              execution_name = 'mlops_execution'  # Provide a unique name for the execution
+
+              response = stepfunctions.start_execution(
+                  stateMachineArn=state_machine_arn,
+                  name=execution_name,
+                  input=json.dumps(input_data)
+              )
+
+              # Print the execution ARN for reference
+              print(f'Started Step Functions execution: {response["executionArn"]}')
+        
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
+      Name: MLOpsPipeline
       RoleArn: !GetAtt CodePipelineServiceRole.Arn
       ArtifactStore:
         Type: S3
@@ -159,7 +233,7 @@ Resources:
               OutputArtifacts:
                 - Name: App
               RunOrder: 1       
-        - Name: BuildContainerandExecuteStepfunction
+        - Name: BuildContainerAndInvokeLambda
           Actions:
             - Name: BuildCustomContainerImage
               ActionTypeId:
@@ -173,23 +247,19 @@ Resources:
                 - Name: App
               OutputArtifacts:
                 - Name: BuildOutputImage
-              RunOrder: 1          
-            - Name: ExecuteSagemakerMLOpsStepFunction
-              InputArtifacts:
-                - Name: BuildOutputImage
+              RunOrder: 1     
+            - Name: InvokeLambda
               ActionTypeId:
                 Category: Invoke
                 Owner: AWS
                 Version: 1
-                Provider: StepFunctions
-              OutputArtifacts:
-                - Name: myOutputArtifact
+                Provider: Lambda
               Configuration:
-                StateMachineArn: !Ref MlOpsStepFunctionArn
-                ExecutionNamePrefix: my-prefix
-                InputType: FilePath
-                Input: sf_start_params.json
-              RunOrder: 2  
+                FunctionName: !Ref LambdaFunction
+              InputArtifacts:
+                - Name: BuildOutputImage
+              RunOrder: 2
+
 Outputs:
   PipelineUrl:
     Value: !Sub https://console.aws.amazon.com/codepipeline/home?region=${AWS::Region}#/view/${Pipeline}
