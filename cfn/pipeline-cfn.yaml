@@ -152,6 +152,9 @@ Resources:
             Principal: 
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws-us-gov:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws-us-gov:iam::aws:policy/AWSCodePipelineCustomActionAccess
       Policies: 
         - PolicyName: StateMachineLambdaProxyPolicy
           PolicyDocument:
@@ -163,6 +166,10 @@ Resources:
                   - states:StartExecution
                   - states:DescribeExecution 
                 Resource: !Ref MlOpsStepFunctionArn
+              - Effect: Allow
+                Action: 
+                  - s3:GetObject
+                Resource: !Sub arn:aws-us-gov:s3:::${ArtifactBucket}/*
 
   LambdaFunction:
     Type: AWS::Lambda::Function
@@ -181,17 +188,24 @@ Resources:
 
           def lambda_handler(event, context):
               # Retrieve the input artifact from the CodeBuild stage
+              job_id = event['CodePipeline.job']['id']
               input_artifact = event['CodePipeline.job']['data']['inputArtifacts'][0]
               artifact_s3_bucket = input_artifact['location']['s3Location']['bucketName']
               artifact_s3_key = input_artifact['location']['s3Location']['objectKey']
 
               # Download the input artifact file
               s3 = boto3.client('s3')
-              temp_file_path = '/tmp/sf_start_params.json'  # Temporary file path on the Lambda execution environment
-              s3.download_file(artifact_s3_bucket, artifact_s3_key, temp_file_path)
+              temp_zip_path = '/tmp/sf_start_params.zip'  # Temporary zip file path on the Lambda execution environment
+              s3.download_file(artifact_s3_bucket, artifact_s3_key, temp_zip_path)
+    
+              # Extract the contents of the zip file
+              temp_extracted_dir = tempfile.mkdtemp()  # Temporary directory for extracting zip contents
+              with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
+                  zip_ref.extractall(temp_extracted_dir)
 
               # Read the contents of the input file
-              with open(temp_file_path, 'r') as file:
+              input_file_path = os.path.join(temp_extracted_dir, 'sf_start_params.json')
+              with open(input_file_path, 'r') as file:
                   input_data = json.load(file)
 
               # Start the Step Functions state machine execution
@@ -207,6 +221,10 @@ Resources:
 
               # Print the execution ARN for reference
               print(f'Started Step Functions execution: {response["executionArn"]}')
+
+              # Tell CodePipeline that the job is complete
+              codepipeline_client = boto3.client('codepipeline')
+              codepipeline_client.put_job_success_result(jobId=job_id)
         
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
