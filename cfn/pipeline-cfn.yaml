@@ -185,6 +185,8 @@ Resources:
           import boto3
           import json
           import os
+          import zipfile
+          import tempfile
 
           def lambda_handler(event, context):
               # Retrieve the input artifact from the CodeBuild stage
