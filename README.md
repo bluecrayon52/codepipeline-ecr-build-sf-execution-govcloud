@@ -1,4 +1,4 @@
-# CI/CD Pipeline for deploying custom Sagemaker ML models using AWS SAM and Step Functions
+# CI/CD Pipeline for deploying custom Sagemaker ML models using AWS SAM and Step Functions (in AWS GovCloud) 
 Automating the build and deployment of machine learning models is an important step in creating production ready machine learning services. Models need to be retrained and deployed when code and/or data are updated. This project provides an overview on use of Step Functions native service integrations with Sagemaker to train, deploy ML models, test results, and finally expose an inference endpoint using API Gateway and Lambda function. This Step Function also provides a way to wait for human approval, before the state transitions can progress towards final ML Model Inference endpoints configurations and deployment.
 
 ## Architecture
@@ -6,7 +6,7 @@ Automating the build and deployment of machine learning models is an important s
 #### The following diagram describes the flow of the Step Function StateMachine. There are several points where the StateMachine has to poll and wait for a task to complete.
 Code for creating and operating ML Ops pipeline is divided into <b>2 Github Repositories</b>, this is the second part repository, which focuses on building and deploying ML Models to ECR and executing the step functions created in first Github repo. 
 
-![ScreenShot](assets/Architecture.PNG)
+![ScreenShot](assets/MLOps-GovCloud.PNG)
 
 
 ## Prerequisites
@@ -16,7 +16,8 @@ Code for creating and operating ML Ops pipeline is divided into <b>2 Github Repo
 - Clone this repo.
 
 ```
-  git clone https://github.com/aws-samples/codepipeline-ecr-build-sf-execution.git
+  git clone https://github.com/bluecrayon52/codepipeline-ecr-build-sf-execution-govcloud.git
+
 ```
 
 ## Setup
